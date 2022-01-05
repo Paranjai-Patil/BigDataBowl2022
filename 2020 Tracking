@@ -1,0 +1,318 @@
+library(tidyverse)
+library(modelr)
+library(dplyr)
+
+
+#loaddata
+
+pff <- read_csv(file = "PFFScoutingData.csv")
+players <- read_csv(file = "players.csv")
+plays <- read_csv(file = "plays.csv")
+
+memory.limit(size = 200000)
+
+tracking2020 <- read_csv(file = "tracking2020.csv")
+
+
+
+#getpunts
+#factor out unneeded columns, plays with penalties
+
+punt1 <- plays %>% 
+  filter(specialTeamsPlayType == "Punt") %>%
+  select(gameId, playId, quarter, yardsToGo, penaltyYards, kickLength, playResult, kickReturnYardage, 
+         kickerId, returnerId, specialTeamsResult, possessionTeam, yardlineSide, yardlineNumber) %>%
+  filter(is.na(penaltyYards) == TRUE) %>%
+  select(-penaltyYards) %>% 
+  mutate(totalid = paste0(gameId, playId))
+
+#adjust so yardline is accurate
+
+punt1 <- punt1 %>%
+  mutate(realyardline = ifelse(possessionTeam == yardlineSide, 100 - yardlineNumber, yardlineNumber)) %>%
+  select(-yardlineNumber)
+
+
+#get IDs to filter tracking plays that are punts
+
+puntID <- punt1 %>%
+  select(totalid)
+
+puntID <- puntID %>%
+  pull(totalid)
+
+
+punttracking2020 <- tracking2020 %>%
+  mutate(totalid = paste0(gameId, playId))
+
+punttracking <- punttracking2020 %>%
+  filter(totalid %in% puntID)
+
+
+#create variables based on number of gunner/rusher/vise
+
+pff <- pff %>%
+  mutate(gunnernumber = str_count(pff$gunners, ";") + 1)
+
+pff <- pff %>%
+  mutate(puntrushernumber = str_count(pff$puntRushers, ";") + 1)
+
+pff <- pff %>%
+  mutate(visenumber = str_count(pff$vises, ";") + 1)
+
+pff <- pff %>%
+  select(hangTime, gunnernumber, puntrushernumber, visenumber, playId, gameId)
+
+
+#join tracking, plays, and pff
+
+fulldata <- punttracking %>%
+  left_join(punt1, by = c("playId", "gameId"))
+
+
+fulldata <- fulldata %>%
+  left_join(pff, by = c("playId", "gameId"))
+
+fulldata <- fulldata %>%
+  select(-totalid.y)
+
+
+#filter for punt results, gets rid of muffed punts
+
+target <- c("punt_land", "fair_catch", "punt_downed", "out_of_bounds", "punt_received")
+
+ballposition <- punttracking %>%
+  filter(displayName == "football") %>%
+  filter(event != "None")%>%
+  filter(event %in% target)%>%
+  mutate(ballx = x, bally = y, ballspeed = s, ballaccel = a) %>%
+  select(ballx, bally, ballspeed, ballaccel, gameId, playId, totalid, event, displayName, time)
+
+#check how many of each event
+
+table(ballposition$event)
+
+
+#some punts have multiple results, eg out of bounds after punt land, both are still in data, must be factored out
+
+df <- table(ballposition$totalid)
+df1 <- as.data.frame(df) 
+df1 <- df1 %>%
+  mutate(totalid = Var1) %>%
+  select(totalid, Freq)
+
+ballposition <- ballposition %>%
+  left_join(df1, by = c("totalid"))
+
+ballposition <- ballposition %>%
+  filter(event == "punt_land" & Freq == 2 | Freq == 1) %>%
+  select(-Freq)
+
+#presnap data for expected yardline model before punt
+
+prs <- fulldata %>%
+  select(quarter, yardsToGo, kickLength, playResult, realyardline, gameId, 
+         playId, kickerId, returnerId, gunnernumber, puntrushernumber, visenumber)
+
+prs1 <- prs %>%
+  left_join(ballposition, by = c("playId", "gameId"))
+
+
+prs1 <- prs1 %>%
+  filter(displayName == "football")
+
+prs1 <- prs1 %>%
+  distinct()
+
+PRESNAPPUNTER <- prs1
+
+PRESNAPPUNTER <- PRESNAPPUNTER %>%
+  select(-returnerId, -ballx, -bally, -ballaccel, -ballspeed, -totalid, -event, -displayName)
+
+#create a pre-snap + punter cotrolled post snap expected yardline (punt yardline + expected return yards) model
+
+
+ps <- fulldata %>%
+  select(quarter, yardsToGo, kickLength, playResult, realyardline, gameId,
+         playId, kickerId, gunnernumber, puntrushernumber, visenumber,
+         returnerId, hangTime)
+
+ps1 <- ps %>%
+  left_join(ballposition, by = c("playId", "gameId"))
+
+ps2 <- ps1 %>%
+  distinct()
+
+POSTSNAPPUNTER1 <- ps2 %>%
+  filter(is.na(event) == FALSE) %>%
+  select(-totalid, -displayName, -event)
+
+POSTSNAPPUNTER <- ps2 %>%
+  select(-totalid, -displayName) %>%
+  filter(is.na(event) == FALSE)
+
+#create full expected yardline model, pre-snap + post-snap punter + post-snap coordinates
+
+XRT1 <- POSTSNAPPUNTER1 %>%
+  left_join(punttracking, by = c("playId", "gameId", "time")) %>%
+  mutate(isreturner = ifelse(nflId == returnerId, 1, 0)) %>%
+  filter(event == "fair_catch" | event == "punt_received")
+
+
+table(XRT1$event)
+
+#get player distances/angles relative to returner
+
+returnerposition <- XRT1 %>%
+  filter(isreturner == 1) %>%
+  mutate(returnerx = x, returnery = y, returnteam = team) %>%
+  select(returnerx, returnery, returnteam, gameId, playId)
+
+XRT1 <- XRT1 %>%
+  left_join(returnerposition, by = c("gameId", "playId"))
+
+XRT2 <- XRT1 %>%
+  mutate(distancefromreturner = sqrt((returnerx - x)^2 + (returnery - y)^2)) %>%
+  mutate(anglefromreturner = (y - returnery)/(x - returnerx)) %>%
+  mutate(otherteam = ifelse(team == returnteam, 0, 1))%>% 
+  select(-team, -returnteam)
+
+
+
+
+XRTDist <- XRT2 %>%
+  filter(displayName != "football") %>%
+  filter(otherteam == 1) %>%
+  select(gameId, playId, distancefromreturner) %>%
+  ungroup() %>%
+  arrange(distancefromreturner) %>%
+  group_by(gameId, playId) %>%
+  mutate(distancenum = paste0("distance", row_number())) %>%
+  pivot_wider(names_from = distancenum, values_from = distancefromreturner)
+
+
+
+XRTSlope <- XRT2 %>%
+  filter(displayName != "football") %>%
+  filter(otherteam == 1) %>%
+  select(gameId, playId, distancefromreturner, anglefromreturner) %>%
+  ungroup() %>%
+  arrange(distancefromreturner) %>%
+  group_by(gameId, playId) %>%
+  mutate(distancenum = paste0("distance", row_number())) %>%
+  arrange(gameId, playId) %>%
+  mutate(distancefromreturner = anglefromreturner) %>%
+  select(-anglefromreturner) %>%
+  pivot_wider(names_from = distancenum, values_from = distancefromreturner) %>%
+  mutate(slope1 = distance1, slope2 = distance2, slope3 = distance3, slope4 = distance4,
+         slope5 = distance5, slope6 = distance6, slope7 = distance7, slope8 = distance8,
+         slope9 = distance9, slope10 = distance10, slope11 = distance11) %>%
+  select(-distance1, -distance2, -distance3, -distance4, -distance5, 
+         -distance6, -distance7, -distance8, -distance9, -distance10, -distance11)
+
+
+XRTDistSlope <- XRTDist %>%
+  left_join(XRTSlope, by = c("playId", "gameId"))
+
+
+XRTYards <- POSTSNAPPUNTER %>%
+  left_join(XRTDistSlope, by = c("playId", "gameId"))
+
+
+#expected return yard model data now has defender distances arranged by closest to farthest
+#also has defender angles, arranged by distance closest to farthest
+
+
+#find same thing for balls not caught by returner, relative to ball landing spot this time instead of returner
+
+NoReturn <- POSTSNAPPUNTER1 %>%
+  left_join(punttracking, by = c("playId", "gameId", "time")) %>%
+  mutate(isreturner = ifelse(nflId == returnerId, 1, 0)) %>%
+  filter(event == "punt_downed" | event == "punt_land")
+
+TeamAssign <- NoReturn %>%
+  filter(position == "P") %>%
+  mutate(kickteam = team) %>%
+  select("gameId", "playId", "kickteam")
+
+NoReturn <- NoReturn %>%
+  left_join(TeamAssign, by = c("gameId", "playId"))
+
+NoReturn <- NoReturn %>%
+  mutate(otherteam = ifelse(team == kickteam, 1, 0))
+
+
+NR <- NoReturn
+
+
+
+
+NR1 <- NR %>%
+  mutate(distancefromball = sqrt((ballx - x)^2 + (bally - y)^2)) %>%
+  mutate(anglefromball = (y - bally)/(x - ballx)) %>%
+  select(-team, -kickteam)
+
+
+NRDist <- NR1 %>%
+  filter(displayName != "football") %>%
+  filter(otherteam == 1) %>%
+  select(gameId, playId, distancefromball) %>%
+  ungroup() %>%
+  arrange(distancefromball) %>%
+  group_by(gameId, playId) %>%
+  mutate(distancenum = paste0("distance", row_number())) %>%
+  pivot_wider(names_from = distancenum, values_from = distancefromball)
+
+
+
+NRSlope <- NR1 %>%
+  filter(displayName != "football") %>%
+  filter(otherteam == 1) %>%
+  select(gameId, playId, distancefromball, anglefromball) %>%
+  ungroup() %>%
+  arrange(distancefromball) %>%
+  group_by(gameId, playId) %>%
+  mutate(distancenum = paste0("distance", row_number())) %>%
+  arrange(gameId, playId) %>%
+  mutate(distancefromball = anglefromball) %>%
+  select(-anglefromball) %>%
+  pivot_wider(names_from = distancenum, values_from = distancefromball) %>%
+  mutate(slope1 = distance1, slope2 = distance2, slope3 = distance3, slope4 = distance4,
+         slope5 = distance5, slope6 = distance6, slope7 = distance7, slope8 = distance8,
+         slope9 = distance9, slope10 = distance10, slope11 = distance11) %>%
+  select(-distance1, -distance2, -distance3, -distance4, -distance5, 
+         -distance6, -distance7, -distance8, -distance9, -distance10, -distance11)
+
+
+NRDistSlope <- NRDist %>%
+  left_join(NRSlope, by = c("playId", "gameId"))
+
+NRXYards <- POSTSNAPPUNTER %>%
+  left_join(NRDistSlope, by = c("playId", "gameId"))
+
+
+XRTYards <- XRTYards %>%
+  filter(event != "punt_land") %>%
+  filter(event != "punt_downed")
+
+
+XRTYards <- XRTYards %>%
+  rbind(NRXYards)
+
+XRTYards <- XRTYards %>%
+  mutate(OB = "out_of_bounds")
+
+XRTYards <- XRTYards %>%
+  mutate(XRTYards = ifelse(event == OB, 0, NA)) %>%
+  select(-OB)
+
+table(XRTYards$distance1)
+
+
+write.csv(XRTYards, "Moneyball/BDB2021/2020XRTY.csv", row.names = TRUE)
+
+write.csv(POSTSNAPPUNTER, "Moneyball/BDB2021/2020POSTSP.csv", row.names = TRUE)
+
+write.csv(PRESNAPPUNTER, "Moneyball/BDB2021/2020PRESP.csv", row.names = TRUE)
+
+
