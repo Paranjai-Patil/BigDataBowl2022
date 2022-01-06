@@ -2,22 +2,21 @@ install.packages(ggplot)
 
 library(tidyverse)
 library(ggplot2)
-library(hrbrthemes)
 library(modelr)
 library(dplyr)
 library(randomForest)
 
-X2018POSTSP <- read_csv("Moneyball/BDB2021/2018POSTSP.csv")
-X2018PRESP <- read_csv("Moneyball/BDB2021/2018PRESP.csv")
-X2018XRTY <- read_csv("Moneyball/BDB2021/2018XRTY.csv")
+X2018POSTSP <- read_csv("2018POSTSP.csv")
+X2018PRESP <- read_csv("2018PRESP.csv")
+X2018XRTY <- read_csv("2018XRTY.csv")
 
-X2019POSTSP <- read_csv("Moneyball/BDB2021/2019POSTSP.csv")
-X2019PRESP <- read_csv("Moneyball/BDB2021/2019PRESP.csv")
-X2019XRTY <- read_csv("Moneyball/BDB2021/2019XRTY.csv")
+X2019POSTSP <- read_csv("2019POSTSP.csv")
+X2019PRESP <- read_csv("2019PRESP.csv")
+X2019XRTY <- read_csv("2019XRTY.csv")
 
-X2020POSTSP <- read_csv("Moneyball/BDB2021/2020POSTSP.csv")
-X2020PRESP <- read_csv("Moneyball/BDB2021/2020PRESP.csv")
-X2020XRTY <- read_csv("Moneyball/BDB2021/2020XRTY.csv")
+X2020POSTSP <- read_csv("2020POSTSP.csv")
+X2020PRESP <- read_csv("2020PRESP.csv")
+X2020XRTY <- read_csv("2020XRTY.csv")
 
 PRESP <- X2020PRESP %>%
   rbind(X2019PRESP) %>%
