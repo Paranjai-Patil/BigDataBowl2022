@@ -1,0 +1,102 @@
+library(tidyverse)
+library(modelr)
+library(dplyr)
+
+plays <- read_csv(file = "plays.csv")
+
+X2020 <- read_csv("2020PRESP.csv")
+
+players <- read_csv("players.csv")
+
+
+punt1 <- plays %>% 
+  filter(specialTeamsPlayType == "Punt")
+
+
+final <- read_csv("Final.csv")
+
+results <- final %>%
+  right_join(punt1, by = c("gameId", "playId"))
+
+results <- results %>%
+  mutate(RTYOE = kickReturnYardage - XRTYardsChange)
+
+results <- results %>%
+  select(gameId, playId, RTYOE, PunterYOE = KickerYOE, CoverageYOE, kickerId, returnerId, possessionTeam)
+
+results2020 <- results %>%
+  mutate(totalid = paste0(gameId, playId))
+
+X2020 <- X2020 %>%
+  mutate(totalid = paste0(gameId, playId))
+
+
+puntID <- X2020 %>%
+  select(totalid)
+
+puntID <- puntID %>%
+  pull(totalid)
+
+
+results2020 <- results2020 %>%
+  filter(totalid %in% puntID)
+
+results2020punter <- results2020 %>%
+  select(kickerId, PunterYOE) %>%
+  ungroup() %>%
+  group_by(kickerId) %>%
+  summarize(punterYOE = sum(PunterYOE, na.rm = TRUE)) %>%
+  arrange(desc(punterYOE))
+
+results2020punter <- results2020punter %>%
+  mutate(nflId = kickerId) %>%
+  select(-kickerId)
+
+results2020punter <- results2020punter %>%
+  left_join(players)
+
+results2020punter <- results2020punter %>%
+  select(displayName, yards = punterYOE)
+
+
+results2020[is.na(results2020)] = 0
+
+
+
+results2020returner <- results2020 %>%
+  select(returnerId, RTYOE) %>%
+  ungroup() %>%
+  group_by(returnerId) %>%
+  summarize(returnerYOE = sum(RTYOE, na.rm = TRUE))
+
+results2020returner <- results2020returner %>%
+  arrange(desc(returnerYOE))
+
+results2020returner <- results2020returner %>%
+  mutate(nflId = returnerId) %>%
+  select(-returnerId)
+
+results2020returner <- results2020returner %>%
+  left_join(players)
+
+results2020returner <- results2020returner %>%
+  select(displayName, yards = returnerYOE)
+
+
+
+results2020team <- results2020 %>%
+  select(possessionTeam, CoverageYOE) %>%
+  ungroup() %>%
+  group_by(possessionTeam) %>%
+  summarize(CoverageYOE = sum(CoverageYOE, na.rm = TRUE)) %>%
+  arrange(desc(CoverageYOE))
+
+results2020team <- results2020team %>%
+  select(displayName = possessionTeam, yards = CoverageYOE)
+
+allresults2020 <- results2020team %>%
+  rbind(results2020returner) %>%
+  rbind(results2020punter)
+
+allresults2020 <- allresults2020 %>%
+  arrange(desc(yards))
