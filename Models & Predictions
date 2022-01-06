@@ -78,7 +78,7 @@ POSTSP[is.na(POSTSP)] = 0
 
 POSTSPTraining <- sample_n(POSTSP, nrow(POSTSP)/2)
 
-fit <- randomForest(playResult ~ preplayresultpred + hangTime + bally + endzonedistance
+fit <- randomForest(playResult ~ preplayresultpred + hangTime + kickLength + bally + endzonedistance
                     + ballspeed + ballaccel, data=POSTSPTraining, num.trees = 50)
 
 
@@ -207,6 +207,9 @@ fit <- randomForest(return ~ kickcontrolledreturnrpred + distance1 + distance2 +
 XRTY <- XRTY %>%
   add_predictions(model = fit, type = "response", var = "XRTYards")
 
+XRTY <- XRTY %>%
+  mutate(allfactorplayresultpred = kickLength - XRTYards)
+
 XRTY0 <- XRTY0 %>%
   select(-k)
 
@@ -230,36 +233,17 @@ Final <- Final %>%
   left_join(PRESPPred)
 
 Final <- Final %>%
-  mutate(KickerYOE = kickercontrolledplayresultpred-playresultpred) %>%
-  mutate(CoverageYOE = XRTYardsChange) %>%
-  mutate(OGResult = playresultpred) %>%
-  select(gameId, playId, OGResult, KickerYOE, CoverageYOE)
-
-Final <- Final %>%
-  left_join(OGReturnPred, by = c("gameId", "playId"))
-
-Final <- Final %>%
-  select(-return.x)
+  left_join(PRESP, by = c("gameId", "playId"))
 
 
-Final <- Final %>%
-  mutate(return = return.y) %>%
-  select(-return.y)
-
-Final <- Final %>%
-  distinct()
-
-Final1 <- Final %>%
-  select(-return)
 
 Final <- Final1 %>%
-  left_join(a, by = c("gameId", "playId"))
+  mutate(KickerYOE = kickercontrolledplayresultpred-playresultpred.x) %>%
+  mutate(CoverageYOE = kickLength - XRTYardsChange - kickercontrolledplayresultpred) %>%
+  select(gameId, playId, KickerYOE, CoverageYOE, XRTYardsChange)
 
-Final <- Final %>%
-  distinct()
-
-
-table(Final$CoverageYOE)
 
 write.csv(Final, "Final.csv", row.names = TRUE)
+
+
 
