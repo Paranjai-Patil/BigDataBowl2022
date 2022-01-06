@@ -1,0 +1,257 @@
+install.packages(ggplot)
+
+library(tidyverse)
+library(ggplot2)
+library(hrbrthemes)
+library(modelr)
+library(dplyr)
+library(randomForest)
+
+X2018POSTSP <- read_csv("Moneyball/BDB2021/2018POSTSP.csv")
+X2018PRESP <- read_csv("Moneyball/BDB2021/2018PRESP.csv")
+X2018XRTY <- read_csv("Moneyball/BDB2021/2018XRTY.csv")
+
+X2019POSTSP <- read_csv("Moneyball/BDB2021/2019POSTSP.csv")
+X2019PRESP <- read_csv("Moneyball/BDB2021/2019PRESP.csv")
+X2019XRTY <- read_csv("Moneyball/BDB2021/2019XRTY.csv")
+
+X2020POSTSP <- read_csv("Moneyball/BDB2021/2020POSTSP.csv")
+X2020PRESP <- read_csv("Moneyball/BDB2021/2020PRESP.csv")
+X2020XRTY <- read_csv("Moneyball/BDB2021/2020XRTY.csv")
+
+PRESP <- X2020PRESP %>%
+  rbind(X2019PRESP) %>%
+  rbind(X2018PRESP)
+
+POSTSP <- X2020POSTSP %>%
+  rbind(X2019POSTSP) %>%
+  rbind(X2018POSTSP)
+
+XRTY <- X2020XRTY %>%
+  rbind(X2019XRTY) %>%
+  rbind(X2018XRTY)
+
+PRESP <- PRESP %>%
+  filter(is.na(realyardline) == FALSE)
+
+PRESP[is.na(PRESP)] = 0
+
+
+PRESPTraining <- sample_n(PRESP, nrow(PRESP)/2)
+
+fit <- randomForest(playResult ~ quarter + yardsToGo + realyardline + gunnernumber 
+                    + puntrushernumber + visenumber, data=PRESPTraining, num.trees = 50)
+
+
+
+PRESP <- PRESP %>%
+  add_predictions(model = fit, type = "response", var = "playresultpred")
+
+lm(formula = playResult ~ playresultpred, data = PRESP)
+
+
+ggplot <- ggplot(data = PRESP) + geom_point(mapping = aes(x = playresultpred, y = playResult))
+
+ggplot <- ggplot + geom_abline(intercept = -10, slope = 1.25, colour = "red")
+
+ggplot <- ggplot + ggtitle("Play Result Prediction vs Actual Play Result Graph (r = 0.59)")
+
+
+ggplot
+
+cor(PRESP[["playresultpred"]], PRESP[["playResult"]], use = "complete.obs")
+
+preds1 <- PRESP %>%
+  select(gameId, playId, playresultpred)
+
+POSTSP <- POSTSP %>%
+  left_join(preds1, by = c("playId", "gameId")) %>%
+  mutate(preplayresultpred = playresultpred) %>%
+  select(-playresultpred) %>%
+  mutate(endzonedistance = realyardline - kickLength) %>%
+  filter(is.na(endzonedistance) == FALSE)
+
+
+POSTSPOB <- POSTSP %>%
+  filter(event == "out_of_bounds") %>%
+  mutate(kickercontrolledplayresultpred = playResult)
+
+POSTSP <- POSTSP %>%
+  filter(event != "out_of_bounds")
+
+table(POSTSP$endzonedistance)
+
+Touchback <- POSTSP %>%
+  filter(endzonedistance == 0) %>%
+  mutate(kickercontrolledplayresultpred = kickLength-20)
+
+POSTSP <- POSTSP %>%
+  filter(endzonedistance != 0)
+
+POSTSP[is.na(POSTSP)] = 0
+
+
+
+POSTSPTraining <- sample_n(POSTSP, nrow(POSTSP)/2)
+
+fit <- randomForest(playResult ~ preplayresultpred + hangTime + kickLength + bally + endzonedistance
+                    + ballspeed + ballaccel, data=POSTSPTraining, num.trees = 50)
+
+
+POSTSP1 <- POSTSP %>%
+  add_predictions(model = fit, type = "response", var = "kickercontrolledplayresultpred")
+
+
+POSTSP <- POSTSP1 %>%
+  rbind(Touchback) %>%
+  rbind(POSTSPOB)
+
+
+
+
+POSTSP <- POSTSP %>%
+  arrange(X1)
+
+POSTSP <- POSTSP %>%
+  mutate(return = kickLength - playResult)
+
+POSTSP <- POSTSP %>%
+  mutate(punterpunt_playresultpred = kickercontrolledplayresultpred)
+
+lm(formula = punterpunt_playresultpred ~ playResult, data = POSTSP)
+
+
+
+ggplot <- ggplot(data = POSTSP) + geom_point(mapping = aes(x = punterpunt_playresultpred, y = playResult))
+
+ggplot <- ggplot + geom_abline(intercept = -5, slope = 1.128, colour = "red")
+
+ggplot <- ggplot + ggtitle("Punter Punts Play Result Prediction vs Actual Play Result Graph (r = 0.87)")
+
+ggplot
+
+cor(POSTSP[["punterpunt_playresultpred"]], POSTSP[["playResult"]], use = "complete.obs")
+
+XRTY <- XRTY %>%
+  left_join(preds2, by = c("gameId", "playId"))
+
+FiltTB <- Touchback %>%
+  mutate(k = kickercontrolledplayresultpred)
+
+FiltTB <- FiltTB %>%
+  select(playId, gameId, k)
+
+
+XRTY1 <- XRTY %>%
+  left_join(FiltTB, by = c("playId", "gameId"))
+
+
+XRTY1 <- XRTY1 %>%
+  mutate(XRTYards = ifelse(k > 15, 0, XRTYards))
+
+
+
+XRTY12 <- XRTY1 %>%
+  mutate(XRTYards = ifelse(event == "out_of_bounds", 0, XRTYards))
+
+tester <- XRTY12 %>%
+  filter(XRTYards == 0)
+
+
+
+XRTY <- XRTY12 %>%
+  filter(is.na(realyardline) == FALSE)
+
+OGReturnPred <- XRTY %>%
+  mutate(return = kickLength - playResult)
+
+OGReturnPred <- OGReturnPred %>%
+  select(gameId, playId, return)
+
+XRTY0 <- XRTY %>%
+  filter(XRTYards == 0) %>%
+  mutate(return = kickLength - playResult)
+
+XRTY <- XRTY %>%
+  filter(is.na(XRTYards) == TRUE)
+
+XRTY <- XRTY %>%
+  mutate(return = kickLength - playResult)
+
+OGReturn <- XRTY %>%
+  mutate(return = kickLength - playResult) %>%
+  select(gameId, playId, return)
+
+POSTSP <- POSTSP %>%
+  mutate(totalid = paste0(gameId, playId))
+
+puntID <- POSTSP %>%
+  select(totalid)
+
+puntID <- puntID %>%
+  pull(totalid)
+
+XRTY <- XRTY %>%
+  mutate(totalid = paste0(gameId, playId))
+
+XRTY <- XRTY %>%
+  filter(totalid %in% puntID)
+
+d <- XRTY
+
+XRTY <- d
+
+XRTY <- XRTY %>%
+  select(-totalid)
+
+XRTY <- XRTY %>%
+  mutate(kickcontrolledreturnrpred = kickLength - kickercontrolledplayresultpred)
+
+a <- d %>%
+  mutate(kickcontrolledreturnrpred = kickLength - kickercontrolledplayresultpred) %>%
+  select(gameId, playId, kickcontrolledreturnrpred)
+
+XRTY[is.na(XRTY)] = 0
+
+XRTY <- XRTY %>%
+  select(-k)
+
+XRTY <- XRTY %>%
+  filter(distance1 != 0)
+
+
+is.na(XRTY)<-sapply(XRTY, is.infinite)
+XRTY[is.na(XRTY)]<-0
+
+XRTY <- XRTY %>%
+  filter(slope1 != 0)
+
+XRTYTrain <- sample_n(XRTY, nrow(PRESP)/2)
+
+
+fit <- randomForest(return ~ kickcontrolledreturnrpred + distance1 + distance2 + distance3
+                    + distance4 + distance5 + distance6 + distance7 + distance8 + distance9
+                    + distance10 + distance11 + slope1 + slope2 + slope3 + slope4 + slope5 
+                    + slope6 + slope7 + slope8 + slope9 + slope10 + slope11, data=XRTYTrain, num.trees = 50)
+
+XRTY <- XRTY %>%
+  add_predictions(model = fit, type = "response", var = "XRTYards")
+
+XRTY <- XRTY %>%
+  mutate(allfactorplayresultpred = kickLength - XRTYards)
+
+
+
+lm(formula = playResult ~ allfactorplayresultpred, data = XRTY)
+
+
+
+ggplot <- ggplot(data = XRTY) + geom_point(mapping = aes(x = allfactorplayresultpred, y = playResult))
+
+ggplot <- ggplot + geom_abline(intercept = -4.74, slope = 1.117, colour = "red")
+
+ggplot <- ggplot + ggtitle("Punt Team Factor Play Result Prediction vs Actual Play Result Graph (r = 0.91)")
+
+ggplot
+
+cor(XRTY[["allfactorplayresultpred"]], XRTY[["playResult"]], use = "complete.obs")
