@@ -37,6 +37,8 @@ PRESPTraining <- sample_n(PRESP, nrow(PRESP)/2)
 
 fit <- randomForest(playResult ~ quarter + yardsToGo + realyardline + gunnernumber 
                          + puntrushernumber + visenumber, data=PRESPTraining, num.trees = 50)
+                         
+round(importance(fit))
 
 PRESP <- PRESP %>%
   add_predictions(model = fit, type = "response", var = "playresultpred")
@@ -81,6 +83,7 @@ POSTSPTraining <- sample_n(POSTSP, nrow(POSTSP)/2)
 fit <- randomForest(playResult ~ preplayresultpred + hangTime + kickLength + bally + endzonedistance
                     + ballspeed + ballaccel, data=POSTSPTraining, num.trees = 50)
 
+round(importance(fit))
 
 POSTSP1 <- POSTSP %>%
   add_predictions(model = fit, type = "response", var = "kickercontrolledplayresultpred")
@@ -203,6 +206,8 @@ fit <- randomForest(return ~ kickcontrolledreturnrpred + distance1 + distance2 +
                     + distance4 + distance5 + distance6 + distance7 + distance8 + distance9
                     + distance10 + distance11 + slope1 + slope2 + slope3 + slope4 + slope5 
                     + slope6 + slope7 + slope8 + slope9 + slope10 + slope11, data=XRTYTrain, num.trees = 50)
+
+round(importance(fit))
 
 XRTY <- XRTY %>%
   add_predictions(model = fit, type = "response", var = "XRTYards")
